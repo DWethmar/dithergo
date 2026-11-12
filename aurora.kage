@@ -1,0 +1,55 @@
+// Aurora's shader, the part after dither.kage: curtains of light. Each has a bright lower edge
+// that folds slowly, and rays above it that fade as they rise; further ones hang higher and dimmer.
+
+var Time float // seconds
+
+func hash(p vec2) float {
+	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453)
+}
+
+// noise is a smooth random value, 0 to 1, changing about once per unit.
+func noise(p vec2) float {
+	i := floor(p)
+	f := fract(p)
+	f = f * f * (3 - 2*f)
+	return mix(mix(hash(i), hash(i+vec2(1, 0)), f.x), mix(hash(i+vec2(0, 1)), hash(i+vec2(1, 1)), f.x), f.y)
+}
+
+// fbm is noise with ever finer noise on top, 0 to 1: cloudier.
+func fbm(p vec2) float {
+	return (8*noise(p) + 4*noise(p*2+17) + 2*noise(p*4+31) + noise(p*8+47)) / 15
+}
+
+// aurora is the tone at p: x across, in heights, 0 in the middle; y 0 at the bottom, 1 at the top.
+func aurora(p vec2) float {
+	light := 0.0
+	for i := 0; i < 3; i++ {
+		fi := float(i)
+		edge := 0.36 + fi*0.09 +
+			0.2*(noise(vec2(p.x*1.1+fi*3.1, Time*0.04+fi*1.7))-0.5) + // slow folds
+			0.06*(noise(vec2(p.x*4.2-fi*1.3, Time*0.08+fi))-0.5) // fine ripples
+		above := p.y - edge
+		curtain := exp(above * 48) // under the edge the light is gone at once
+		if above > 0 {
+			curtain = exp(-above * (9 + fi*3.5))
+		}
+		// Rays only change across, so they stand straight up; a slow bend keeps them from marching.
+		rx := (p.x + 0.4*(noise(vec2(p.x*1.6, Time*0.035+fi))-0.5)) * 14
+		rays := mix(0.2, 1, smoothstep(0.3, 0.7, fbm(vec2(rx+fi*9, Time*0.05+fi))))
+		rays *= 0.6 + 0.4*noise(vec2(rx*3.2, fi*4+Time*0.02))
+		// Stretches of a curtain are brighter than others, so the edge is lit in patches.
+		patch := mix(0.45, 1, smoothstep(0.3, 0.7, noise(vec2(p.x+fi*5, Time*0.025+fi*2))))
+		rim := 0.9 * exp(-abs(above)*34)
+		light += (curtain*rays + rim*(0.5+0.5*rays)) * patch * (1 - 0.25*fi)
+	}
+	return 0.95 * (1 - exp(-light*2.2))
+}
+
+// shortcut: the field is worked out for every pixel though it only changes per cell. Fine for
+// buttons and a screen; render one pixel per cell and scale up if it ever costs too much.
+func Fragment(dstPos vec4, srcPos vec2, color vec4) vec4 {
+	size := imageSrc0Size() // without a source image this is the rectangle being drawn
+	cell := floor((srcPos - imageSrc0Origin()) / Cell)
+	uv := (cell + 0.5) * Cell / size
+	return dither(cell, aurora(vec2((uv.x-0.5)*size.x/size.y, 1-uv.y)))
+}

@@ -1,0 +1,10 @@
+// Draw's shader, the part after dither.kage: the tone is source image 0's brightness.
+
+func Fragment(dstPos vec4, srcPos vec2, color vec4) vec4 {
+	origin := imageSrc0Origin()
+	cell := floor((srcPos - origin) / Cell)
+	// shortcut: one sample per cell, at its centre, so detail finer than a cell aliases.
+	// Average the cell instead if dithered photos shimmer when they move.
+	at := min((cell+0.5)*Cell, imageSrc0Size()-0.5) // a cut-off last cell still reads inside the image
+	return dither(cell, dot(imageSrc0UnsafeAt(origin+at).rgb, vec3(0.299, 0.587, 0.114)))
+}

@@ -1,0 +1,118 @@
+// The shader of NoiseField, the part after dither.kage and noise.kage: fractal noise folded
+// back on itself, so it flows like smoke rather than scrolls. After dithercn's noise field
+// (https://dithercn.dev/docs/backgrounds/noise-field); the uniforms are the fields of Noise
+// in dither.go, already clamped there.
+
+var Time float      // seconds
+var Variant float   // 0 smoke, 1 ridges, 2 contours, 3 marble
+var Scale float     // higher is smaller, busier noise
+var Warp float      // how far the noise folds back on itself
+var Detail float    // layers of noise, 1 to 6
+var Contrast float  // 1 is soft, 2 and up hard-edged islands
+var Coverage float  // more or less of the rectangle inked
+var Intensity float // the brightest tone
+var Bands float     // lines for contours, stripes for marble
+var Drift vec2      // the way it drifts (y up), as long as it is fast
+var Invert float    // 1 swaps paper and ink
+var Mask float      // 0 none, 1 centre, 2 top, 3 bottom, 4 edges
+var MaskSize float  // how much the mask clears, 0 to 1
+
+// next is where the next, finer layer of noise reads: turned, so the layers never line up.
+func next(p vec2) vec2 {
+	return mat2(0.8, -0.6, 0.6, 0.8)*p*2.02 + vec2(11.3, 4.7)
+}
+
+// fbm is layers of noise, each twice as fine and half as strong, 0 to 1.
+func fbm(p vec2, layers float) float {
+	sum, amp, norm := 0.0, 0.5, 0.0
+	for i := 0; i < 6; i++ {
+		if float(i) >= layers {
+			break
+		}
+		sum += amp * gnoise(p, 0)
+		norm += amp
+		p = next(p)
+		amp *= 0.5
+	}
+	return clamp(0.5+0.5*sum/norm, 0, 1)
+}
+
+// ridges is fbm of noise folded at zero: sharp creases where the noise changes sign.
+func ridges(p vec2) float {
+	sum, amp, norm := 0.0, 0.5, 0.0
+	for i := 0; i < 6; i++ {
+		if float(i) >= Detail {
+			break
+		}
+		r := 1 - abs(gnoise(p, 0))
+		sum += amp * r * r
+		norm += amp
+		p = next(p)
+		amp *= 0.5
+	}
+	return sum / norm
+}
+
+// keep is how much of the tone the mask leaves at uv (0 to 1, y up).
+func keep(uv vec2) float {
+	oval := length(vec2((uv.x-0.5)*0.85, (uv.y-0.5)*1.7))
+	if Mask > 3.5 { // edges: only the middle stays
+		r := 0.2 + 0.45*(1-MaskSize)
+		return 1 - smoothstep(r, r+0.4, oval)
+	}
+	if Mask > 2.5 {
+		return smoothstep(MaskSize*0.8, MaskSize*0.8+0.55, uv.y)
+	}
+	if Mask > 1.5 {
+		return smoothstep(MaskSize*0.8, MaskSize*0.8+0.55, 1-uv.y)
+	}
+	if Mask > 0.5 {
+		return smoothstep(0.36*MaskSize, 0.36*MaskSize+0.44, oval)
+	}
+	return 1
+}
+
+func Fragment(dstPos vec4, srcPos vec2, color vec4) vec4 {
+	size := imageSrc0Size() // without a source image this is the rectangle being drawn
+	cell := floor((srcPos - imageSrc0Origin()) / Cell)
+	uv := (cell + 0.5) * Cell / size
+	uv.y = 1 - uv.y // y up, so Drift and the masks read like a map
+	p := vec2(uv.x*size.x/size.y, uv.y) * Scale
+	drift := Drift * Time * 0.05
+
+	// The fold: two slow noises say how far to push each point before the real noise is read.
+	q := vec2(
+		fbm(p+vec2(0, Time*0.02)-drift, Detail),
+		fbm(p+vec2(5.2, 1.3)-vec2(Time*0.015, 0)-drift*0.8, Detail))
+	w := p + Warp*q - drift*0.6
+
+	n := 0.0
+	if Variant > 2.5 { // marble: stripes, bent by the fold
+		n = pow(0.5+0.5*sin(dot(w, vec2(0.35, 1))*Bands*2.4+fbm(w*0.7, Detail)*2.5), 1.6)
+	} else if Variant > 1.5 { // contours: lines need a smooth height, so no fine layers
+		h := fbm(p*0.6+Warp*0.3*q-drift*0.6, min(Detail, 2))
+		n = max(smoothstep(0.38, 0.47, abs(fract(h*Bands)-0.5)), h*h*0.2)
+	} else if Variant > 0.5 {
+		n = pow(ridges(w), 1.4)
+	} else {
+		n = fbm(w, Detail)
+	}
+
+	if Variant > 1.5 && Variant < 2.5 {
+		n = clamp(n+Coverage, 0, 1)
+	} else {
+		steep := 1.5
+		if Variant < 0.5 {
+			steep = 1 // smoke keeps a gentle slope, so its folds stay gradients
+		}
+		n = clamp((n-0.5+Coverage)*Contrast*steep+0.5, 0, 1)
+		n = n * n * (3 - 2*n)
+	}
+	if Variant < 0.5 {
+		n = pow(n, 2.8)
+	}
+	if Invert > 0.5 {
+		n = 1 - n
+	}
+	return dither(cell, n*keep(uv)*Intensity)
+}

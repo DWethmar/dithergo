@@ -1,0 +1,62 @@
+//kage:unit pixels
+
+// Ordered dither: the start of every dithergo shader. dither.go puts one of the other .kage
+// files after it, which adds the Fragment that works out a tone and calls dither.
+//
+// The picture is cut into square cells; a cell is inked when the tone there is above the
+// cell's own threshold, which comes from a repeating Bayer tile. So a tone of 0.25 inks a
+// quarter of the cells, spread evenly.
+package main
+
+var Cell float      // a cell's side in pixels
+var Order float     // the Bayer tile is 2^Order cells square: 1, 2 or 3
+var Palette [8]vec4 // premultiplied, paper first
+var Colors float    // how many of Palette are in use, 2 to 8
+
+// bayer2 is the 2x2 Bayer tile at cell a: 0, 0.5 / 0.75, 0.25.
+func bayer2(a vec2) float {
+	a = mod(floor(a), 2) // 0 or 1, so the sum below is exact on any float precision
+	return fract(a.x*0.5 + a.y*0.75)
+}
+
+// threshold is the cell's own: a tone or amount above it inks the cell.
+func threshold(cell vec2) float {
+	// A bigger tile is the 2x2 one again at half the scale, a quarter as strong.
+	t := bayer2(cell)
+	n := 4.0
+	if Order >= 2 {
+		t += bayer2(cell/2) / 4
+		n = 16
+	}
+	if Order >= 3 {
+		t += bayer2(cell/4) / 16
+		n = 64
+	}
+	return t + 0.5/n // the tile holds k/n: half a step up, 0 inks nothing and 1 everything
+}
+
+// paletteAt is Palette[i] for a whole number i.
+func paletteAt(i float) vec4 {
+	clr := Palette[0]
+	for k := 1; k < 8; k++ { // not Palette[int(i)]: WebGL 1 only indexes by a loop counter
+		if float(k) == i {
+			clr = Palette[k]
+		}
+	}
+	return clr
+}
+
+// dither is the colour of a cell whose tone is tone, 0 (paper) to 1 (the last colour). The
+// tone runs along the palette, and the cell takes one of the two colours it falls between.
+func dither(cell vec2, tone float) vec4 {
+	x := clamp(tone, 0, 1) * (Colors - 1)
+	lower := min(floor(x), Colors-2)
+	return paletteAt(lower + step(threshold(cell), x-lower))
+}
+
+// ink is the colour of a cell where amount (0 to 1) of the cells are dots of palette colour
+// number index (1 is the first after paper) and the rest are paper: for when the colour of
+// the dots and how many there are do not go together.
+func ink(cell vec2, index, amount float) vec4 {
+	return paletteAt(index * step(threshold(cell), amount))
+}

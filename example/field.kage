@@ -1,0 +1,21 @@
+//kage:unit pixels
+
+// The tone the example dithers: a planet's glowing horizon with slow waves in the light.
+// White is full ink, black is paper. Write any picture like this one, or draw one with DrawImage.
+package main
+
+var Time float // seconds
+
+func Fragment(dstPos vec4, srcPos vec2, color vec4) vec4 {
+	size := imageSrc0Size()
+	p := (srcPos - imageSrc0Origin()) / size.y // 0..1 down the screen, x in the same unit
+	// The planet is a wide circle whose top pokes into the bottom of the screen.
+	d := length(p-vec2(0.5*size.x/size.y, 1.8)) - 1 // distance above its edge, negative inside
+	glow := exp(-abs(d) * 9)
+	if d < 0 {
+		glow = 0.2 + 0.8*exp(d*30) // inside: a bright rim over a dim body
+	}
+	waves := 0.5 + 0.5*sin(p.x*7+Time*0.5+1.5*sin(p.y*9-Time*0.3))
+	tone := clamp(glow*(0.55+0.45*waves), 0, 1)
+	return vec4(tone, tone, tone, 1)
+}

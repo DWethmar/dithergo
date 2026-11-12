@@ -1,0 +1,33 @@
+// Smooth noise, for the shaders that draw hills and smoke. Goes between dither.kage and the
+// file with the Fragment.
+
+// slope is a random direction for each whole-number point, turned by turn times a speed of
+// its own. Turning the slopes over time makes the bumps swell, sink and merge where they
+// are, like a lava lamp, rather than slide by unchanged.
+func slope(i vec2, turn float) vec2 {
+	r := fract(sin(dot(i, vec2(127.1, 311.7))) * 43758.5453)
+	a := 6.2831853*r + turn*(0.12+0.2*fract(r*57))
+	return vec2(cos(a), sin(a))
+}
+
+const skew = 0.36602540378   // (sqrt(3)-1)/2: squares to the triangles simplex noise lives on
+const unskew = 0.21132486540 // (3-sqrt(3))/6: and back
+
+// gnoise is smooth noise, about -1 to 1, changing about once per unit. Simplex noise: a
+// bump at every corner of a grid of triangles, each sloping its own way. On a grid of squares
+// the bumps line up in rows and columns, which smoke and contour lines show at once.
+func gnoise(p vec2, turn float) float {
+	i := floor(p + (p.x+p.y)*skew) // the corner of the triangle p is in
+	a := p - i + (i.x+i.y)*unskew  // from that corner to p
+	second := vec2(0, 1)           // the triangle's second corner: which half of the square
+	if a.x > a.y {
+		second = vec2(1, 0)
+	}
+	b := a - second + unskew
+	c := a - 1 + 2*unskew
+	// Each corner's bump fades out before it reaches the opposite side.
+	fade := max(0.5-vec3(dot(a, a), dot(b, b), dot(c, c)), 0)
+	fade *= fade
+	fade *= fade
+	return 70 * dot(fade, vec3(dot(slope(i, turn), a), dot(slope(i+second, turn), b), dot(slope(i+1, turn), c)))
+}

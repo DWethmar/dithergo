@@ -1,0 +1,46 @@
+// The shader of Contours, the part after dither.kage and noise.kage: a topographic map. Contour lines over
+// hills that morph like a lava lamp, each in the colour of its height, and a stipple on the
+// slopes in shadow.
+
+var Time float // seconds
+
+const lines = 16.0       // contour lines from the lowest ground to the highest
+const unit = 1.0 / 110.0 // map distance per cell: the hills keep their size in cells
+
+// height is the height of the ground at p, 0 to 1. Only broad hills, so the lines stay
+// unbroken; the detail comes from bending the map first. The noise turns with time (see
+// noise.kage), which is what makes the hills morph.
+func height(p vec2) float {
+	q := p + vec2(4.3, 2.9+Time*0.015) // the whole map also rises slowly, like the wax
+	q += 0.3 * vec2(gnoise(q*0.45+1.7, Time), gnoise(q*0.45+8.3, Time))
+	return 0.5 + 0.34*gnoise(q*0.85, Time) + 0.14*gnoise(q*1.9+4.1, Time)
+}
+
+func Fragment(dstPos vec4, srcPos vec2, color vec4) vec4 {
+	cells := imageSrc0Size() / Cell // without a source image the size is the rectangle being drawn
+	cell := floor((srcPos - imageSrc0Origin()) / Cell)
+	p := (cell + 0.5 - cells/2) * unit
+	h := height(p)
+	rise := vec2(height(p+vec2(unit, 0)), height(p+vec2(0, unit))) - h // to the next cell right and down
+
+	// How many cells away the nearest line runs: how far off its height we are, over how fast
+	// the height changes here. A line is 1.2 cells wide, every fifth one 2.2.
+	nearest := floor(h*lines + 0.5)
+	off := abs(h*lines - nearest)
+	away := off / max(length(rise)*lines, 1e-4)
+	half := 0.6
+	if mod(nearest, 5) == 0 {
+		half = 1.1
+	}
+	line := 1 - smoothstep(half-0.5, half+0.5, away)
+	line *= 1 - smoothstep(0.08, 0.14, off) // on flat ground a line would swell into a blot
+
+	// Lit from the top left: slopes facing away get a light stipple.
+	lit := dot(normalize(vec3(-rise/unit*0.9, 1)), normalize(vec3(-0.6, -0.6, 0.6)))
+	shade := 0.28 * smoothstep(0.6, 0.15, lit)
+
+	// The colour is the height of the nearest line, so a line is one colour across its width.
+	// Most ground lies between 0.2 and 0.8, and the colours are spread over that.
+	level := clamp((nearest/lines-0.2)/0.6, 0, 0.999)
+	return ink(cell, 1+floor(level*(Colors-1)), max(line, shade))
+}
